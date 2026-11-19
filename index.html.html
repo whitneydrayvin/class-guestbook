@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Class guestbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Caveat:wght@600&display=swap" rel="stylesheet">
+
+  <!-- STEP 1: Load the Supabase library (the "toolkit" for talking to Supabase) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+
+  <style>
+    :root {
+      --paper: #EEF2F5;
+      --sheet: #FFFFFF;
+      --ink: #1D2B53;
+      --ink-soft: #5A6787;
+      --rule: #C9D3E0;
+      --highlight: #F5D547;
+      --error: #B3261E;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #121A2C;
+        --sheet: #1B2540;
+        --ink: #E6ECF5;
+        --ink-soft: #9AA7C2;
+        --rule: #2E3B5C;
+        --highlight: #E2C23A;
+        --error: #FF8A80;
+        color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Atkinson Hyperlegible", system-ui, sans-serif;
+      font-size: 1.0625rem;
+      line-height: 1.5;
+    }
+    main { max-width: 40rem; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+    h1 { font-size: 2.5rem; line-height: 1.1; margin: 0 0 0.5rem; }
+    .intro { color: var(--ink-soft); margin: 0 0 2rem; max-width: 34rem; }
+
+    form {
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      border-radius: 6px;
+      padding: 1.25rem;
+      display: grid;
+      gap: 0.75rem;
+    }
+    label { font-weight: 700; font-size: 0.95rem; }
+    input, textarea {
+      width: 100%;
+      font: inherit;
+      color: var(--ink);
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      padding: 0.6rem 0.7rem;
+    }
+    textarea { min-height: 5rem; resize: vertical; }
+    input:focus-visible, textarea:focus-visible, button:focus-visible {
+      outline: 3px solid var(--highlight);
+      outline-offset: 2px;
+    }
+    .actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+    button {
+      font: inherit;
+      font-weight: 700;
+      border: 0;
+      border-radius: 4px;
+      padding: 0.6rem 1.1rem;
+      cursor: pointer;
+      background: var(--ink);
+      color: var(--paper);
+    }
+    button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--rule); }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    #status { font-size: 0.95rem; color: var(--ink-soft); }
+    #status.error { color: var(--error); }
+
+    h2 { font-size: 1.25rem; margin: 2.5rem 0 0.75rem; }
+    #messages { list-style: none; margin: 0; padding: 0; }
+    #messages li {
+      padding: 1rem 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    .signature {
+      font-family: "Caveat", "Segoe Script", cursive;
+      font-size: 1.6rem;
+      line-height: 1;
+      background: linear-gradient(transparent 60%, var(--highlight) 60%);
+      color: var(--ink);
+      padding: 0 0.15rem;
+    }
+    .when { font-size: 0.85rem; color: var(--ink-soft); margin-left: 0.5rem; }
+    .text { margin: 0.4rem 0 0; overflow-wrap: anywhere; }
+    .empty { color: var(--ink-soft); padding: 1rem 0; }
+    @media (prefers-reduced-motion: no-preference) {
+      #messages li.new { animation: arrive 0.6s ease-out; }
+      @keyframes arrive { from { background: var(--highlight); } to { background: transparent; } }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Class guestbook</h1>
+    <p class="intro">Sign the book. Your message is saved in a Supabase database, so it’s still here when you refresh the page or open it on another device.</p>
+
+    <form id="guestbook-form">
+      <div>
+        <label for="name">Your name</label>
+        <input id="name" maxlength="50" required autocomplete="given-name">
+      </div>
+      <div>
+        <label for="message">Message</label>
+        <textarea id="message" maxlength="300" required></textarea>
+      </div>
+      <div class="actions">
+        <button type="submit" id="post-button">Sign the guestbook</button>
+        <button type="button" class="secondary" id="refresh-button">Refresh</button>
+        <span id="status" role="status"></span>
+      </div>
+    </form>
+
+    <h2>Signatures</h2>
+    <ul id="messages"><li class="empty">Loading signatures…</li></ul>
+  </main>
+
+  <script>
+    // ---------------------------------------------------------------
+    // STEP 2: Connect to YOUR Supabase project.
+    // These two values are safe to put in a public web page.
+    // (Never put the sb_secret_ key here!)
+    // ---------------------------------------------------------------
+    const SUPABASE_URL = "https://rmlopqauovspnkxnzacj.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_qbBIuejPZHj8HULKTFeKxg_zAXd8_K5";
+
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const list = document.getElementById("messages");
+    const statusEl = document.getElementById("status");
+    const form = document.getElementById("guestbook-form");
+    const postButton = document.getElementById("post-button");
+
+    function showStatus(text, isError = false) {
+      statusEl.textContent = text;
+      statusEl.className = isError ? "error" : "";
+    }
+
+    // ---------------------------------------------------------------
+    // STEP 3: READ data — "give me every message, newest first"
+    // ---------------------------------------------------------------
+    async function loadMessages(highlightId = null) {
+      const { data, error } = await db
+        .from("messages")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        list.innerHTML = "";
+        showStatus("Couldn’t load signatures: " + error.message, true);
+        return;
+      }
+
+      list.innerHTML = "";
+      if (data.length === 0) {
+        list.innerHTML = '<li class="empty">No signatures yet. Be the first to sign.</li>';
+        return;
+      }
+
+      for (const row of data) {
+        const li = document.createElement("li");
+        if (row.id === highlightId) li.className = "new";
+
+        const name = document.createElement("span");
+        name.className = "signature";
+        name.textContent = row.name;
+
+        const when = document.createElement("span");
+        when.className = "when";
+        when.textContent = new Date(row.created_at).toLocaleString();
+
+        const text = document.createElement("p");
+        text.className = "text";
+        text.textContent = row.message;
+
+        li.append(name, when, text);
+        list.append(li);
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // STEP 4: WRITE data — "add this new row to the messages table"
+    // ---------------------------------------------------------------
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const name = document.getElementById("name").value.trim();
+      const message = document.getElementById("message").value.trim();
+      if (!name || !message) return;
+
+      postButton.disabled = true;
+      showStatus("Saving…");
+
+      const { data, error } = await db
+        .from("messages")
+        .insert({ name: name, message: message })
+        .select()
+        .single();
+
+      postButton.disabled = false;
+
+      if (error) {
+        showStatus("Couldn’t save your message: " + error.message, true);
+        return;
+      }
+
+      document.getElementById("message").value = "";
+      showStatus("Signed. Thanks, " + name + ".");
+      loadMessages(data.id);
+    });
+
+    document.getElementById("refresh-button").addEventListener("click", () => {
+      showStatus("");
+      loadMessages();
+    });
+
+    // Load the messages as soon as the page opens
+    loadMessages();
+  </script>
+</body>
+</html>
