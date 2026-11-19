@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Caveat:wght@600&display=swap" rel="stylesheet">
 
-  <!-- STEP 1: Load the Supabase library (the "toolkit" for talking to Supabase) -->
+  <!-- STEP 1: Load the Supabase library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 
   <style>
@@ -35,6 +35,7 @@
       }
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       background: var(--paper);
@@ -47,14 +48,16 @@
     h1 { font-size: 2.5rem; line-height: 1.1; margin: 0 0 0.5rem; }
     .intro { color: var(--ink-soft); margin: 0 0 2rem; max-width: 34rem; }
 
-    form {
+    .card {
       background: var(--sheet);
       border: 1px solid var(--rule);
       border-radius: 6px;
       padding: 1.25rem;
       display: grid;
       gap: 0.75rem;
+      margin-bottom: 1rem;
     }
+    .card p { margin: 0; }
     label { font-weight: 700; font-size: 0.95rem; }
     input, textarea {
       width: 100%;
@@ -82,16 +85,17 @@
       color: var(--paper);
     }
     button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--rule); }
+    button.small { padding: 0.25rem 0.6rem; font-size: 0.85rem; font-weight: 400; }
     button:disabled { opacity: 0.6; cursor: wait; }
-    #status { font-size: 0.95rem; color: var(--ink-soft); }
-    #status.error { color: var(--error); }
+    .status { font-size: 0.95rem; color: var(--ink-soft); }
+    .status.error { color: var(--error); }
+    .who { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
 
     h2 { font-size: 1.25rem; margin: 2.5rem 0 0.75rem; }
     #messages { list-style: none; margin: 0; padding: 0; }
-    #messages li {
-      padding: 1rem 0;
-      border-bottom: 1px solid var(--rule);
-    }
+    #messages li { padding: 1rem 0; border-bottom: 1px solid var(--rule); }
+    .row-top { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+    .row-top button { margin-left: auto; }
     .signature {
       font-family: "Caveat", "Segoe Script", cursive;
       font-size: 1.6rem;
@@ -100,7 +104,8 @@
       color: var(--ink);
       padding: 0 0.15rem;
     }
-    .when { font-size: 0.85rem; color: var(--ink-soft); margin-left: 0.5rem; }
+    .when { font-size: 0.85rem; color: var(--ink-soft); }
+    .yours { font-size: 0.85rem; color: var(--ink-soft); font-style: italic; }
     .text { margin: 0.4rem 0 0; overflow-wrap: anywhere; }
     .empty { color: var(--ink-soft); padding: 1rem 0; }
     @media (prefers-reduced-motion: no-preference) {
@@ -112,23 +117,48 @@
 <body>
   <main>
     <h1>Class guestbook</h1>
-    <p class="intro">Sign the book. Your message is saved in a Supabase database, so it’s still here when you refresh the page or open it on another device.</p>
+    <p class="intro">Anyone can read the guestbook. Log in to sign it, and you can delete your own messages, but nobody else’s.</p>
 
-    <form id="guestbook-form">
+    <!-- Shown when logged OUT -->
+    <form id="auth-form" class="card" hidden>
+      <p>Log in or create an account to sign the guestbook.</p>
       <div>
-        <label for="name">Your name</label>
-        <input id="name" maxlength="50" required autocomplete="given-name">
+        <label for="email">Email</label>
+        <input id="email" type="email" required autocomplete="email">
       </div>
       <div>
-        <label for="message">Message</label>
-        <textarea id="message" maxlength="300" required></textarea>
+        <label for="password">Password (at least 6 characters)</label>
+        <input id="password" type="password" minlength="6" required autocomplete="current-password">
       </div>
       <div class="actions">
-        <button type="submit" id="post-button">Sign the guestbook</button>
-        <button type="button" class="secondary" id="refresh-button">Refresh</button>
-        <span id="status" role="status"></span>
+        <button type="submit" id="login-button">Log in</button>
+        <button type="button" class="secondary" id="signup-button">Create account</button>
+        <span id="auth-status" class="status" role="status"></span>
       </div>
     </form>
+
+    <!-- Shown when logged IN -->
+    <div id="signed-in" hidden>
+      <div class="card who">
+        <p>Logged in as <strong id="user-email"></strong></p>
+        <button type="button" class="secondary" id="logout-button">Log out</button>
+      </div>
+
+      <form id="guestbook-form" class="card">
+        <div>
+          <label for="name">Your name</label>
+          <input id="name" maxlength="50" required autocomplete="given-name">
+        </div>
+        <div>
+          <label for="message">Message</label>
+          <textarea id="message" maxlength="300" required></textarea>
+        </div>
+        <div class="actions">
+          <button type="submit" id="post-button">Sign the guestbook</button>
+          <span id="post-status" class="status" role="status"></span>
+        </div>
+      </form>
+    </div>
 
     <h2>Signatures</h2>
     <ul id="messages"><li class="empty">Loading signatures…</li></ul>
@@ -136,27 +166,68 @@
 
   <script>
     // ---------------------------------------------------------------
-    // STEP 2: Connect to YOUR Supabase project.
-    // These two values are safe to put in a public web page.
-    // (Never put the sb_secret_ key here!)
+    // STEP 2: Connect to your Supabase project (safe to be public).
     // ---------------------------------------------------------------
     const SUPABASE_URL = "https://rmlopqauovspnkxnzacj.supabase.co";
     const SUPABASE_KEY = "sb_publishable_qbBIuejPZHj8HULKTFeKxg_zAXd8_K5";
 
     const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    const list = document.getElementById("messages");
-    const statusEl = document.getElementById("status");
-    const form = document.getElementById("guestbook-form");
-    const postButton = document.getElementById("post-button");
+    let currentUser = null; // who is logged in right now (or null)
 
-    function showStatus(text, isError = false) {
-      statusEl.textContent = text;
-      statusEl.className = isError ? "error" : "";
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(el, text, isError = false) {
+      el.textContent = text;
+      el.className = "status" + (isError ? " error" : "");
     }
 
     // ---------------------------------------------------------------
-    // STEP 3: READ data — "give me every message, newest first"
+    // STEP 3: AUTH — sign up, log in, log out
+    // ---------------------------------------------------------------
+    function readCredentials() {
+      return { email: $("email").value.trim(), password: $("password").value };
+    }
+
+    // Log in with an existing account
+    $("auth-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setStatus($("auth-status"), "Logging in…");
+      const { error } = await db.auth.signInWithPassword(readCredentials());
+      if (error) setStatus($("auth-status"), error.message, true);
+    });
+
+    // Create a brand-new account
+    $("signup-button").addEventListener("click", async () => {
+      if (!$("auth-form").reportValidity()) return;
+      setStatus($("auth-status"), "Creating account…");
+      const { data, error } = await db.auth.signUp(readCredentials());
+      if (error) {
+        setStatus($("auth-status"), error.message, true);
+      } else if (!data.session) {
+        // Happens when "Confirm email" is turned ON in Supabase
+        setStatus($("auth-status"), "Check your email for a confirmation link, then log in.");
+      }
+    });
+
+    $("logout-button").addEventListener("click", () => db.auth.signOut());
+
+    // Supabase tells us whenever someone logs in or out.
+    // We use that to show the right part of the page.
+    db.auth.onAuthStateChange((event, session) => {
+      currentUser = session ? session.user : null;
+      $("auth-form").hidden = !!currentUser;
+      $("signed-in").hidden = !currentUser;
+      if (currentUser) {
+        $("user-email").textContent = currentUser.email;
+        setStatus($("auth-status"), "");
+        $("password").value = "";
+      }
+      loadMessages(); // redraw so Delete buttons appear on YOUR messages
+    });
+
+    // ---------------------------------------------------------------
+    // STEP 4: READ — everyone can read all messages
     // ---------------------------------------------------------------
     async function loadMessages(highlightId = null) {
       const { data, error } = await db
@@ -164,21 +235,24 @@
         .select("*")
         .order("created_at", { ascending: false });
 
+      const list = $("messages");
+      list.innerHTML = "";
+
       if (error) {
-        list.innerHTML = "";
-        showStatus("Couldn’t load signatures: " + error.message, true);
+        list.innerHTML = '<li class="empty">Couldn’t load signatures: ' + error.message + "</li>";
         return;
       }
-
-      list.innerHTML = "";
       if (data.length === 0) {
-        list.innerHTML = '<li class="empty">No signatures yet. Be the first to sign.</li>';
+        list.innerHTML = '<li class="empty">No signatures yet. Log in and be the first to sign.</li>';
         return;
       }
 
       for (const row of data) {
         const li = document.createElement("li");
         if (row.id === highlightId) li.className = "new";
+
+        const top = document.createElement("div");
+        top.className = "row-top";
 
         const name = document.createElement("span");
         name.className = "signature";
@@ -188,26 +262,45 @@
         when.className = "when";
         when.textContent = new Date(row.created_at).toLocaleString();
 
+        top.append(name, when);
+
+        // Only show a Delete button on messages that belong to you.
+        // (This is just convenience. The REAL protection is the
+        //  Row Level Security rule in the database.)
+        if (currentUser && row.user_id === currentUser.id) {
+          const yours = document.createElement("span");
+          yours.className = "yours";
+          yours.textContent = "yours";
+
+          const del = document.createElement("button");
+          del.className = "secondary small";
+          del.textContent = "Delete";
+          del.addEventListener("click", () => deleteMessage(row.id));
+
+          top.append(yours, del);
+        }
+
         const text = document.createElement("p");
         text.className = "text";
         text.textContent = row.message;
 
-        li.append(name, when, text);
+        li.append(top, text);
         list.append(li);
       }
     }
 
     // ---------------------------------------------------------------
-    // STEP 4: WRITE data — "add this new row to the messages table"
+    // STEP 5: WRITE — logged-in users add a message.
+    // The database fills in user_id automatically from the login.
     // ---------------------------------------------------------------
-    form.addEventListener("submit", async (event) => {
+    $("guestbook-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const name = document.getElementById("name").value.trim();
-      const message = document.getElementById("message").value.trim();
+      const name = $("name").value.trim();
+      const message = $("message").value.trim();
       if (!name || !message) return;
 
-      postButton.disabled = true;
-      showStatus("Saving…");
+      $("post-button").disabled = true;
+      setStatus($("post-status"), "Saving…");
 
       const { data, error } = await db
         .from("messages")
@@ -215,25 +308,35 @@
         .select()
         .single();
 
-      postButton.disabled = false;
+      $("post-button").disabled = false;
 
       if (error) {
-        showStatus("Couldn’t save your message: " + error.message, true);
+        setStatus($("post-status"), "Couldn’t save your message: " + error.message, true);
         return;
       }
-
-      document.getElementById("message").value = "";
-      showStatus("Signed. Thanks, " + name + ".");
+      $("message").value = "";
+      setStatus($("post-status"), "Signed. Thanks, " + name + ".");
       loadMessages(data.id);
     });
 
-    document.getElementById("refresh-button").addEventListener("click", () => {
-      showStatus("");
-      loadMessages();
-    });
+    // ---------------------------------------------------------------
+    // STEP 6: DELETE — the database only allows deleting your own rows.
+    // ---------------------------------------------------------------
+    async function deleteMessage(id) {
+      const { data, error } = await db
+        .from("messages")
+        .delete()
+        .eq("id", id)
+        .select();
 
-    // Load the messages as soon as the page opens
-    loadMessages();
+      if (error) {
+        alert("Couldn’t delete: " + error.message);
+      } else if (data.length === 0) {
+        // RLS quietly blocked it: no error, but nothing was deleted
+        alert("Nothing was deleted. You can only delete your own messages.");
+      }
+      loadMessages();
+    }
   </script>
 </body>
 </html>
